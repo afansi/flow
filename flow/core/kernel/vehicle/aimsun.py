@@ -871,3 +871,32 @@ class AimsunKernelVehicle(KernelVehicle):
     def get_max_speed(self, veh_id, error):
         """See parent class."""
         raise NotImplementedError
+
+    ###########################################################################
+    #                        Methods for Datapipeline                         #
+    ###########################################################################
+
+    def get_accel(self, veh_id, noise=True, failsafe=True):
+        """Return the acceleration of vehicle with veh_id."""
+        pass
+        raise NotImplementedError
+
+    def update_accel(self, veh_id, accel, noise=True, failsafe=True):
+        """Update stored acceleration of vehicle with veh_id."""
+        pass
+        raise NotImplementedError
+
+    def get_2d_position(self, veh_id, error=-1001):
+        """Return (x, y) position of vehicle with veh_id."""
+        pass
+        raise NotImplementedError
+
+    def get_realized_accel(self, veh_id):
+        """Return the acceleration that the vehicle actually make."""
+        pass
+        raise NotImplementedError
+
+    def get_road_grade(self, veh_id):
+        """Return the road-grade of the vehicle with veh_id."""
+        pass
+        raise NotImplementedError

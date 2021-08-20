@@ -4,7 +4,7 @@ import logging
 import struct
 
 import flow.utils.aimsun.constants as ac
-import flow.utils.aimsun.struct as aimsun_struct
+import flow.utils.aimsun.aimsun_struct as aimsun_struct
 from flow.core.kernel.vehicle.aimsun import INFOS_ATTR_BY_INDEX
 
 
@@ -27,9 +27,14 @@ def create_client(port, print_status=False):
     # create a socket connection
     if print_status:
         print('Listening for connection...', end=' ')
+        print('Listening for connection...')
 
     stop = False
+    num_tries = 0
     while not stop:
+        num_tries += 1
+        if num_tries % 100000 == 0:
+            print(f"num_tries: {num_tries}")
         # try to connect
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -43,6 +48,8 @@ def create_client(port, print_status=False):
 
         except Exception as e:
             logging.debug('Cannot connect to the server: {}'.format(e))
+            if num_tries % 100000 == 0:
+                print('Cannot connect to the server: {} - {}'.format(port, e))
 
         except socket.error:
             stop = False
@@ -72,6 +79,7 @@ class FlowAimsunAPI(object):
             the port number of the socket connection
         """
         self.port = port
+        print(f"PORT: {port}")
         self.s = create_client(port, print_status=True)
 
     def _send_command(self, command_type, in_format, values, out_format):

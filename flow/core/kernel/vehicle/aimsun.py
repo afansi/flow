@@ -2,7 +2,7 @@
 from flow.core.kernel.vehicle.base import KernelVehicle
 import collections
 import numpy as np
-from flow.utils.aimsun.struct import InfVeh
+from flow.utils.aimsun.aimsun_struct import InfVeh
 from flow.controllers.car_following_models import SimCarFollowingController
 from flow.controllers.rlcontroller import RLController
 from flow.controllers.lane_change_controllers import SimLaneChangeController
@@ -35,7 +35,9 @@ class AimsunKernelVehicle(KernelVehicle):
                  sim_params):
         """See parent class."""
         KernelVehicle.__init__(self, master_kernel, sim_params)
+        self.build_init()
 
+    def build_init(self):
         self.__ids = []  # ids of all vehicles
         self.__human_ids = []  # ids of human-driven vehicles
         self.__controlled_ids = []  # ids of flow-controlled vehicles
@@ -410,11 +412,12 @@ class AimsunKernelVehicle(KernelVehicle):
 
     def reset(self):
         """See parent class."""
-        raise NotImplementedError
+        # raise NotImplementedError
+        self.build_init()
 
-    def remove(self, aimsun_id):
+    def remove(self, veh_id):
         """See parent class."""
-        veh_id = self._id_aimsun2flow[aimsun_id]
+        aimsun_id = self._id_flow2aimsun[veh_id]
         self.kernel_api.remove_vehicle(aimsun_id)
 
         type_id = self.__vehicles[veh_id]['type_name']
@@ -524,6 +527,8 @@ class AimsunKernelVehicle(KernelVehicle):
             edge the vehicle is currently on. If a value of None is provided,
             the vehicle does not update its route
         """
+        # TODO
+        return
         raise NotImplementedError  # FIXME
         # for i, veh_id in enumerate(veh_ids):
         #     if route_choices[i] is not None:

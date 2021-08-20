@@ -2,7 +2,7 @@
 import flow.config as config
 import flow.utils.aimsun.constants
 from flow.utils.aimsun.api import FlowAimsunAPI
-from flow.utils.aimsun.struct import InfVeh
+from flow.utils.aimsun.aimsun_struct import InfVeh
 import unittest
 import os
 import subprocess

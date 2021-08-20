@@ -71,6 +71,7 @@ class AimsunKernelNetwork(BaseKernelNetwork):
             "centroid_config_name": self.sim_params.centroid_config_name,
             "subnetwork_name": self.sim_params.subnetwork_name
         }
+        print(f"config.PROJECT_PATH: {config.PROJECT_PATH}")
 
         if network.net_params.inflows is not None:
             output["inflows"] = network.net_params.inflows.__dict__
@@ -86,9 +87,9 @@ class AimsunKernelNetwork(BaseKernelNetwork):
 
         # path to the Aimsun_Next binary
         if platform.system() == 'Darwin':  # OS X
-            binary_name = 'Aimsun Next'
+            binary_name = 'Aimsun Next' if self.sim_params.render else "aconsole"
         else:
-            binary_name = 'Aimsun_Next'
+            binary_name = 'Aimsun_Next' if self.sim_params.render else "aconsole"
         aimsun_path = osp.join(osp.expanduser(config.AIMSUN_NEXT_PATH),
                                binary_name)
 
@@ -108,21 +109,31 @@ class AimsunKernelNetwork(BaseKernelNetwork):
         # path to the supplementary file that is used to generate an aimsun
         # network from a template
         template_path = network.net_params.template
+        print(f"Is template Path Null: {template_path is None}")
         if template_path is None:
+            # script_path = osp.join(config.PROJECT_PATH,
+            #                        'flow/utils/aimsun/generate.py')
             script_path = osp.join(config.PROJECT_PATH,
-                                   'flow/utils/aimsun/generate.py')
+                                   'flow/utils/aimsun/test_generate.py')
         else:
             script_path = osp.join(config.PROJECT_PATH,
-                                   'flow/utils/aimsun/load.py')
+                                   'flow/utils/aimsun/test_load.py')
             file_path = osp.join(config.PROJECT_PATH,
                                  'flow/utils/aimsun/aimsun_template_path_%s' % self.sim_params.port)
             with open(file_path, 'w') as f:
                 f.write("%s_%s" % (template_path, self.sim_params.port))
+            print(f"template_path: {template_path}")
+            print(f"file_path: {file_path}")
+            # copy the template path to a new file
             # instances must have unique template paths to avoid crashing?
             os.popen('cp %s %s_%s' % (template_path, template_path, self.sim_params.port))
 
+        add_arg = "console" if "console" in binary_name else "gui"
+        print(f"Script path: {script_path}")
+        print(f"AIMSUN CALL: {[aimsun_path, '-script', script_path, str(self.sim_params.port), config.PROJECT_PATH, add_arg]}")
+        # import pdb; pdb.set_trace() # use 'where' to get the stack trace.
         # start the aimsun process
-        aimsun_call = [aimsun_path, "-script", script_path, str(self.sim_params.port)]
+        aimsun_call = [aimsun_path, "-script", script_path, str(self.sim_params.port), config.PROJECT_PATH, add_arg]
         self.aimsun_proc = subprocess.Popen(aimsun_call)
 
         # merge types into edges
@@ -159,6 +170,9 @@ class AimsunKernelNetwork(BaseKernelNetwork):
 
                 check_file = "flow/core/kernel/network/network_data_check_%s" % self.sim_params.port
                 check_path = os.path.join(config.PROJECT_PATH, check_file)
+                
+                print(f"scenar_path: {scenar_path}")
+                print(f"check_path: {check_path}")
 
                 # a check file is created when all the network data
                 # have been written ; it is necessary since writing
@@ -180,6 +194,8 @@ class AimsunKernelNetwork(BaseKernelNetwork):
         else:
             data_file = 'flow/utils/aimsun/osm_edges_%s.json' % self.sim_params.port
             filepath = os.path.join(config.PROJECT_PATH, data_file)
+
+            print(f"filepath: {filepath}")
 
             while not os.path.exists(filepath):
                 time.sleep(0.5)
@@ -261,10 +277,13 @@ class AimsunKernelNetwork(BaseKernelNetwork):
         # delete the json file that was used to read the network data
         cur_dir = os.path.join(config.PROJECT_PATH,
                                'flow/core/kernel/network')
-        os.remove(os.path.join(cur_dir, 'data_%s.json' % self.sim_params.port))
+        filename = os.path.join(cur_dir, 'data_%s.json' % self.sim_params.port)
+        if os.path.exists(filename):
+            os.remove(filename)
         if self.network.net_params.template is not None:
-            os.remove('%s_%s' % (self.network.net_params.template,
-                                 self.sim_params.port))
+            filename = '%s_%s' % (self.network.net_params.template, self.sim_params.port)
+            if os.path.exists(filename):
+                os.remove(filename)
 
     ###########################################################################
     #                        State acquisition methods                        #

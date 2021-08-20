@@ -2,55 +2,389 @@
 """Script for generating a custom Aimsun network."""
 # TODO adapt this file with respect to scripting_api.py
 
+print("HELLO WORLD !")
+
 import sys
 import os
-import flow.config as config
-
-SITEPACKAGES = os.path.join(config.AIMSUN_SITEPACKAGES,
-                            "lib/python2.7/site-packages")
-sys.path.append(SITEPACKAGES)
-
-from flow.core.params import InFlows
-from flow.core.params import TrafficLightParams
-
+import os.path as osp
 from copy import deepcopy
 import json
-import numpy as np
+import math
+import warnings
 
-print "INITIALIZATION SCRIPTING"
+from PyANGBasic import *
+from PyANGKernel import *
+from PyANGConsole import *
 
-# sys.path.append(os.path.join(config.AIMSUN_NEXT_PATH,
-#                              'programming/Aimsun Next API/AAPIPython/Micro'))
+if len(sys.argv) > 2:
+    PROJECT_PATH = sys.argv[2]
+else:
+    raise ValueError("Project Path is not Defined")
 
-sys.path.append(
-    os.path.join(
-        config.AIMSUN_NEXT_PATH,
-        'programming/Aimsun Next API/python/private/Micro'
+AIMSUN_SITEPACKAGES = os.environ.get("AIMSUN_SITEPACKAGES", None)
+
+# path to the Aimsun_Next main directory (required for Aimsun simulations)
+AIMSUN_NEXT_PATH = os.environ.get("AIMSUN_NEXT_PATH", None)
+
+SITEPACKAGES = osp.join(AIMSUN_SITEPACKAGES, "lib/python2.7/site-packages")
+sys.path.append(SITEPACKAGES)
+
+# for a in sys.path:
+#     print("%s" % (a))
+
+print("INITIALIZATION SCRIPTING")
+print("SITEPACKAGES: %s" % (SITEPACKAGES))
+print("config.AIMSUN_SITEPACKAGES: %s " % (AIMSUN_SITEPACKAGES))
+print("config.AIMSUN_NEXT_PATH: %s" % (AIMSUN_NEXT_PATH))
+
+sys.path.append(osp.join(AIMSUN_NEXT_PATH, 'programming/Aimsun Next API/python/private/Micro'))
+
+def deprecated_attribute(obj, dep_from, dep_to):
+    """Print a deprecation warning.
+    Parameters
+    ----------
+    obj : class
+        The class with the deprecated attribute
+    dep_from : str
+        old (deprecated) name of the attribute
+    dep_to : str
+        new name for the attribute
+    """
+    warnings.simplefilter('always', PendingDeprecationWarning)
+    warnings.warn(
+        "The attribute {} in {} is deprecated, use {} instead.".format(
+            dep_from, obj.__class__.__name__, dep_to),
+        PendingDeprecationWarning
     )
-)
+
+# Traffic light defaults
+PROGRAM_ID = 1
+MAX_GAP = 3.0
+DETECTOR_GAP = 0.6
+SHOW_DETECTORS = True
+
+class TrafficLightParams:
+    """Base traffic light.
+    This class is used to place traffic lights in the network and describe
+    the state of these traffic lights. In addition, this class supports
+    modifying the states of certain lights via TraCI.
+    """
+
+    def __init__(self, baseline=False):
+        """Instantiate base traffic light.
+        Attributes
+        ----------
+        baseline: bool
+        """
+        # traffic light xml properties
+        self.__tls_properties = dict()
+
+        # all traffic light parameters are set to default baseline values
+        self.baseline = baseline
+
+    def add(self,
+            node_id,
+            tls_type="static",
+            programID=10,
+            offset=None,
+            phases=None,
+            maxGap=None,
+            detectorGap=None,
+            showDetectors=None,
+            file=None,
+            freq=None):
+        """Add a traffic light component to the network.
+        When generating networks using xml files, using this method to add a
+        traffic light will explicitly place the traffic light in the requested
+        node of the generated network.
+        If traffic lights are not added here but are already present in the
+        network (e.g. through a prebuilt net.xml file), then the traffic light
+        class will identify and add them separately.
+        Parameters
+        ----------
+        node_id : str
+            name of the node with traffic lights
+        tls_type : str, optional
+            type of the traffic light (see Note)
+        programID : str, optional
+            id of the traffic light program (see Note)
+        offset : int, optional
+            initial time offset of the program
+        phases : list  of dict, optional
+            list of phases to be followed by the traffic light, defaults
+            to default sumo traffic light behavior. Each element in the list
+            must consist of a dict with two keys:
+            * "duration": length of the current phase cycle (in sec)
+            * "state": string consist the sequence of states in the phase
+            * "minDur": optional
+                The minimum duration of the phase when using type actuated
+            * "maxDur": optional
+                The maximum duration of the phase when using type actuated
+        maxGap : int, optional
+            describes the maximum time gap between successive vehicle that will
+            cause the current phase to be prolonged, **used for actuated
+            traffic lights**
+        detectorGap : int, optional
+            used for actuated traffic lights
+            determines the time distance between the (automatically generated)
+            detector and the stop line in seconds (at each lanes maximum
+            speed), **used for actuated traffic lights**
+        showDetectors : bool, optional
+            toggles whether or not detectors are shown in sumo-gui, **used for
+            actuated traffic lights**
+        file : str, optional
+            which file the detector shall write results into
+        freq : int, optional
+            the period over which collected values shall be aggregated
+        Note
+        ----
+        For information on defining traffic light properties, see:
+        http://sumo.dlr.de/wiki/Simulation/Traffic_Lights#Defining_New_TLS-Programs
+        """
+        # prepare the data needed to generate xml files
+        self.__tls_properties[node_id] = {"id": node_id, "type": tls_type}
+
+        if programID:
+            self.__tls_properties[node_id]["programID"] = programID
+
+        if offset:
+            self.__tls_properties[node_id]["offset"] = offset
+
+        if phases:
+            self.__tls_properties[node_id]["phases"] = phases
+
+        if tls_type == "actuated":
+            # Required parameters
+            self.__tls_properties[node_id]["max-gap"] = \
+                maxGap if maxGap else MAX_GAP
+            self.__tls_properties[node_id]["detector-gap"] = \
+                detectorGap if detectorGap else DETECTOR_GAP
+            self.__tls_properties[node_id]["show-detectors"] = \
+                showDetectors if showDetectors else SHOW_DETECTORS
+
+            # Optional parameters
+            if file:
+                self.__tls_properties[node_id]["file"] = file
+
+            if freq:
+                self.__tls_properties[node_id]["freq"] = freq
+
+    def get_properties(self):
+        """Return traffic light properties.
+        This is meant to be used by the generator to import traffic light data
+        to the .net.xml file
+        """
+        return self.__tls_properties
+
+    def actuated_default(self):
+        """Return the default values for an actuated network.
+        An actuated network is a network for a system where
+        all junctions are actuated traffic lights.
+        Returns
+        -------
+        tl_logic : dict
+            traffic light logic
+        """
+        tl_type = "actuated"
+        program_id = 1
+        max_gap = 3.0
+        detector_gap = 0.8
+        show_detectors = True
+        phases = [{
+            "duration": "31",
+            "minDur": "8",
+            "maxDur": "45",
+            "state": "GrGr"
+        }, {
+            "duration": "6",
+            "minDur": "3",
+            "maxDur": "6",
+            "state": "yryr"
+        }, {
+            "duration": "31",
+            "minDur": "8",
+            "maxDur": "45",
+            "state": "rGrG"
+        }, {
+            "duration": "6",
+            "minDur": "3",
+            "maxDur": "6",
+            "state": "ryry"
+        }]
+
+        return {
+            "tl_type": str(tl_type),
+            "program_id": str(program_id),
+            "max_gap": str(max_gap),
+            "detector_gap": str(detector_gap),
+            "show_detectors": show_detectors,
+            "phases": phases
+        }
 
 
-# Load an empty template
-gui = GKGUISystem.getGUISystem().getActiveGui()
-gui.newDoc(os.path.join(config.PROJECT_PATH,
-                        "flow/utils/aimsun/Aimsun_Flow.ang"),
-           "EPSG:32601")
-model = gui.getActiveModel()
+class InFlows:
+    """Used to add inflows to a network.
+    Inflows can be specified for any edge that has a specified route or routes.
+    """
 
-# HACK: Store port in author
-port_string = sys.argv[1]
-model.setAuthor(port_string)
+    def __init__(self):
+        """Instantiate Inflows."""
+        self.__flows = []
 
-def generate_net(nodes,
+    def add(self,
+            edge,
+            veh_type,
+            vehs_per_hour=None,
+            probability=None,
+            period=None,
+            depart_lane="first",
+            depart_speed=0,
+            name="flow",
+            begin=1,
+            end=86400,
+            number=None,
+            **kwargs):
+        r"""Specify a new inflow for a given type of vehicles and edge.
+        Parameters
+        ----------
+        edge : str
+            starting edge for the vehicles in this inflow
+        veh_type : str
+            type of the vehicles entering the edge. Must match one of the types
+            set in the Vehicles class
+        vehs_per_hour : float, optional
+            number of vehicles per hour, equally spaced (in vehicles/hour).
+            Cannot be specified together with probability or period
+        probability : float, optional
+            probability for emitting a vehicle each second (between 0 and 1).
+            Cannot be specified together with vehs_per_hour or period
+        period : float, optional
+            insert equally spaced vehicles at that period (in seconds). Cannot
+            be specified together with vehs_per_hour or probability
+        depart_lane : int or str
+            the lane on which the vehicle shall be inserted. Can be either one
+            of:
+            * int >= 0: index of the lane (starting with rightmost = 0)
+            * "random": a random lane is chosen, but the vehicle insertion is
+              not retried if it could not be inserted
+            * "free": the most free (least occupied) lane is chosen
+            * "best": the "free" lane (see above) among those who allow the
+              vehicle the longest ride without the need to change lane
+            * "first": the rightmost lane the vehicle may use
+            Defaults to "first".
+        depart_speed : float or str
+            the speed with which the vehicle shall enter the network (in m/s)
+            can be either one of:
+            - float >= 0: the vehicle is tried to be inserted using the given
+              speed; if that speed is unsafe, departure is delayed
+            - "random": vehicles enter the edge with a random speed between 0
+              and the speed limit on the edge; the entering speed may be
+              adapted to ensure a safe distance to the leading vehicle is kept
+            - "speedLimit": vehicles enter the edge with the maximum speed that
+              is allowed on this edge; if that speed is unsafe, departure is
+              delayed
+            Defaults to 0.
+        name : str, optional
+            prefix for the id of the vehicles entering via this inflow.
+            Defaults to "flow"
+        begin : float, optional
+            first vehicle departure time (in seconds, minimum 1 second).
+            Defaults to 1 second
+        end : float, optional
+            end of departure interval (in seconds). This parameter is not taken
+            into account if 'number' is specified. Defaults to 24 hours
+        number : int, optional
+            total number of vehicles the inflow should create (due to rounding
+            up, this parameter may not be exactly enforced and shouldn't be set
+            too small). Default: infinite (c.f. 'end' parameter)
+        kwargs : dict, optional
+            see Note
+        Note
+        ----
+        For information on the parameters start, end, vehs_per_hour,
+        probability, period, number, as well as other vehicle type and routing
+        parameters that may be added via \*\*kwargs, refer to:
+        http://sumo.dlr.de/wiki/Definition_of_Vehicles,_Vehicle_Types,_and_Routes
+        """
+        # check for deprecations
+        def deprecate(old, new):
+            deprecated_attribute(self, old, new)
+            new_val = kwargs[old]
+            del kwargs[old]
+            return new_val
+
+        if "vehsPerHour" in kwargs:
+            vehs_per_hour = deprecate("vehsPerHour", "vehs_per_hour")
+        if "departLane" in kwargs:
+            depart_lane = deprecate("departLane", "depart_lane")
+        if "departSpeed" in kwargs:
+            depart_speed = deprecate("departSpeed", "depart_speed")
+
+        new_inflow = {
+            "name": "%s_%d" % (name, len(self.__flows)),
+            "vtype": veh_type,
+            "edge": edge,
+            "departLane": depart_lane,
+            "departSpeed": depart_speed,
+            "begin": begin,
+            "end": end
+        }
+        new_inflow.update(kwargs)
+
+        inflow_params = [vehs_per_hour, probability, period]
+        n_inflow_params = len(inflow_params) - inflow_params.count(None)
+        if n_inflow_params != 1:
+            raise ValueError(
+                "Exactly one among the three parameters 'vehs_per_hour', "
+                "'probability' and 'period' must be specified in InFlows.add. "
+                "{} were specified.".format(n_inflow_params))
+        if probability is not None and (probability < 0 or probability > 1):
+            raise ValueError(
+                "Inflow.add called with parameter 'probability' set to {}, but"
+                " probability should be between 0 and 1.".format(probability))
+        if begin is not None and begin < 1:
+            raise ValueError(
+                "Inflow.add called with parameter 'begin' set to {}, but begin"
+                " should be greater or equal than 1 second.".format(begin))
+
+        if number is not None:
+            del new_inflow["end"]
+            new_inflow["number"] = number
+
+        if vehs_per_hour is not None:
+            new_inflow["vehsPerHour"] = vehs_per_hour
+        if probability is not None:
+            new_inflow["probability"] = probability
+        if period is not None:
+            new_inflow["period"] = period
+
+        self.__flows.append(new_inflow)
+
+    def get(self):
+        """Return the inflows of each edge."""
+        return self.__flows
+
+
+def generate_net(data,
+                 gui,
+                 model,
+                 nodes,
                  edges,
                  connections,
                  inflows,
                  veh_types,
-                 traffic_lights):
+                 traffic_lights,
+                 save_flg=False):
     """Generate a network in the Aimsun template.
 
     Parameters
     ----------
+    data : dict
+        Data used to initilaized the Aimsun run
+    gui : obj
+        Aimsun graphic interface
+    model : obj
+        current Aimsun model
     nodes : list of dict
         all available nodes
     edges : list of dict
@@ -99,14 +433,14 @@ def generate_net(nodes,
             # offset edge ends if there is a radius in the node
             if "radius" in first_node:
                 first_node_offset[0] = first_node["radius"] * \
-                    np.cos(theta*np.pi/180)
+                    math.cos(theta*math.pi/180)
                 first_node_offset[1] = first_node["radius"] * \
-                    np.sin(theta*np.pi/180)
+                    math.sin(theta*math.pi/180)
             if "radius" in last_node:
                 last_node_offset[0] = - last_node["radius"] * \
-                    np.cos(theta*np.pi/180)
+                    math.cos(theta*math.pi/180)
                 last_node_offset[1] = - last_node["radius"] * \
-                    np.sin(theta*np.pi/180)
+                    math.sin(theta*math.pi/180)
 
             # offset edge ends if there are multiple edges between nodes
             # find the edges that share the first node
@@ -118,13 +452,13 @@ def generate_net(nodes,
                 new_theta = get_edge_angle(new_first_node, new_last_node)
                 if new_theta == theta - 180 or new_theta == theta + 180:
                     first_node_offset[0] += lane_width * 0.5 *\
-                        np.sin(theta * np.pi / 180)
+                        math.sin(theta * math.pi / 180)
                     first_node_offset[1] -= lane_width * 0.5 * \
-                        np.cos(theta * np.pi / 180)
+                        math.cos(theta * math.pi / 180)
                     last_node_offset[0] += lane_width * 0.5 *\
-                        np.sin(theta * np.pi / 180)
+                        math.sin(theta * math.pi / 180)
                     last_node_offset[1] -= lane_width * 0.5 *\
-                        np.cos(theta * np.pi / 180)
+                        math.cos(theta * math.pi / 180)
                     break
 
             new_point = GKPoint()
@@ -222,7 +556,14 @@ def generate_net(nodes,
     # set vehicle types
     vehicles = model.getCatalog().getObjectsByType(type_vehicle)
     if vehicles is not None:
-        for vehicle in vehicles.itervalues():
+         print("Type Vehicle: %s" % (vehicles))
+    if vehicles is not None:
+        all_names = []
+        for ids in vehicles.keys():
+            all_names.append(vehicles[ids].getName())
+        print("vehicles names %r " % (all_names))
+        for ids in vehicles.keys():
+            vehicle = vehicles[ids]
             name = vehicle.getName()
             if name == "Car":
                 for veh_type in veh_types:
@@ -248,7 +589,7 @@ def generate_net(nodes,
         edge_aimsun = model.getCatalog().findByName(
             inflow['edge'], type_section)
         traffic_state_aimsun.setEntranceFlow(
-            edge_aimsun, None, inflow['vehsPerHour'])
+            edge_aimsun, None, inflow.get('vehsPerHour', 0))
 
     # get traffic demand
     demand = model.getCatalog().findByName(
@@ -270,7 +611,7 @@ def generate_net(nodes,
             create_traffic_demand(model, veh_type["veh_id"])  # TODO debug
 
     # set the view to "whole world" in Aimsun
-    view = gui.getActiveViewWindow().getView()
+    view = None if gui is None else gui.getActiveViewWindow().getView()
     if view is not None:
         view.wholeWorld()
 
@@ -278,22 +619,32 @@ def generate_net(nodes,
     set_vehicles_color(model)
 
     # set API
-    network_name = data["network_name"]
+    network_name = data.get("network_name", "")
     scenario = model.getCatalog().findByName(
         network_name, model.getType("GKScenario"))  # find scenario
     scenario_data = scenario.getInputData()
-    scenario_data.addExtension(os.path.join(
-        config.PROJECT_PATH, "flow/utils/aimsun/run.py"), True)
+    scenario_data.addExtension(
+        os.path.join(PROJECT_PATH, "flow/utils/aimsun/test_run.py"), True
+    )
 
     # save
-    gui.save(model, 'flow.ang', GGui.GGuiSaveType.eSaveAs)
+    if save_flg:
+        if gui is not None:
+            gui.save(model, 'flow.ang', GGui.GGuiSaveType.eSaveAs)
 
 
-def generate_net_osm(file_name, inflows, veh_types):
+
+def generate_net_osm(data, gui, model, file_name, inflows, veh_types, save_flg=False):
     """Generate a network from an osm file.
 
     Parameters
     ----------
+    data : dict
+        Data used to initilaized the Aimsun run
+    gui : obj
+        Aimsun graphic interface
+    model : obj
+        current Aimsun model
     file_name : str
         path to the osm file
     inflows : flow.core.params.InFlows
@@ -320,7 +671,8 @@ def generate_net_osm(file_name, inflows, veh_types):
     # set vehicle types
     vehicles = model.getCatalog().getObjectsByType(type_vehicle)
     if vehicles is not None:
-        for vehicle in vehicles.itervalues():
+        for ids in vehicles.keys():
+            vehicle = vehicles[ids]
             name = vehicle.getName()
             if name == "Car":
                 for veh_type in veh_types:
@@ -347,7 +699,7 @@ def generate_net_osm(file_name, inflows, veh_types):
             edge_aimsun = model.getCatalog().findByName(
                 inflow['edge'], type_section)
             traffic_state_aimsun.setEntranceFlow(
-                edge_aimsun, None, inflow['vehsPerHour'])
+                edge_aimsun, None, inflow.get('vehsPerHour', 0))
 
     # get traffic demand
     demand = model.getCatalog().findByName(
@@ -369,7 +721,7 @@ def generate_net_osm(file_name, inflows, veh_types):
             create_traffic_demand(model, veh_type["veh_id"])  # TODO debug
 
     # set the view to "whole world" in Aimsun
-    view = gui.getActiveViewWindow().getView()
+    view = None if gui is None else gui.getActiveViewWindow().getView()
     if view is not None:
         view.wholeWorld()
 
@@ -377,15 +729,18 @@ def generate_net_osm(file_name, inflows, veh_types):
     set_vehicles_color(model)
 
     # set API
-    network_name = data["network_name"]
+    network_name = data.get("network_name", "")
     scenario = model.getCatalog().findByName(
         network_name, model.getType("GKScenario"))  # find scenario
     scenario_data = scenario.getInputData()
-    scenario_data.addExtension(os.path.join(
-        config.PROJECT_PATH, "flow/utils/aimsun/run.py"), True)
+    scenario_data.addExtension(
+        os.path.join(PROJECT_PATH, "flow/utils/aimsun/test_run.py"), True
+    )
 
     # save
-    gui.save(model, 'flow.ang', GGui.GGuiSaveType.eSaveAs)
+    if save_flg:
+        if gui is not None:
+            gui.save(model, 'flow.ang', GGui.GGuiSaveType.eSaveAs)
 
 
 def get_junctions(nodes):
@@ -448,9 +803,9 @@ def get_edge_angle(first_node, last_node):
     float
         edge angle
     """
-    del_x = np.array([last_node['x'] - first_node['x']])
-    del_y = np.array([last_node['y'] - first_node['y']])
-    theta = np.arctan2(del_y, del_x) * 180 / np.pi
+    del_x = last_node['x'] - first_node['x']
+    del_y = last_node['y'] - first_node['y']
+    theta = math.atan2(del_y, del_x) * 180 / math.pi
     return theta
 
 
@@ -627,7 +982,8 @@ def set_vehicles_color(model):
             model.getType("GKVehicle"))
         if vehicles is not None:
             ramp.lines(len(vehicles))
-            for i, vehicle in enumerate(vehicles.itervalues()):
+            all_veh = [vehicles[ids] for ids in vehicles.keys()]
+            for i, vehicle in enumerate(all_veh):
                 color_range = view_style.addRange(vehicle.getName())
                 color_range.color = ramp.getColor(i)
         model.getGeoModel().addStyle(view_style)
@@ -789,11 +1145,13 @@ def create_node_meters(model, cp, node_id, phases):
     return meters
 
 
-def set_sim_step(experiment, sim_step):
+def set_sim_step(model, experiment, sim_step):
     """Set the simulation step of an Aimsun experiment.
 
     Parameters
     ----------
+    model : obj
+        the Aimsun model
     experiment : GKTExperiment
         the experiment object
     sim_step : float
@@ -805,37 +1163,82 @@ def set_sim_step(experiment, sim_step):
     experiment.setDataValue(col_sim, sim_step)
 
 
+
+
+def load_model_from_gui_or_console():
+    isgui = True
+    filepath = os.path.join(PROJECT_PATH, "flow/utils/aimsun/Aimsun_Flow.ang")
+    if len(sys.argv) > 3 and sys.argv[3] == 'console':
+        isgui = False
+    gui = None
+    console = None
+    model = None
+    if isgui:
+        # Load an empty template
+        gui = GKGUISystem.getGUISystem().getActiveGui()
+        gui.newDoc(filepath, "EPSG:32601")
+        model = gui.getActiveModel()
+    else:
+        console = ANGConsole()
+        res = console.open(filepath )
+        if not res:
+            console.getLog().addError( "Cannot load the network" )
+            print("cannot load network")
+        else:
+            model = console.getModel()
+    return gui, console, model
+    
+
+
+# Load an empty template
+gui, console, model = load_model_from_gui_or_console()
+
+if len(sys.argv) > 1:
+    # HACK: Store port in author
+    port_string = sys.argv[1]
+    model.setAuthor(port_string)
+else:
+    port_string = ""
+    model.setAuthor("No Author")
+
+save_flg = False
+
 # collect the network-specific data
 data_file = 'flow/core/kernel/network/data_%s.json'%port_string
-print "GENERATE", data_file
-with open(os.path.join(config.PROJECT_PATH, data_file)) as f:
-    data = json.load(f)
+print("Loading  File %s/%s " % (PROJECT_PATH, data_file))
+filename = osp.join(PROJECT_PATH, data_file)
+if osp.exists(filename):
+    with open(filename) as f:
+        data = json.load(f)
+else:
+    data = {}
 
 # export the data from the dictionary
-veh_types = data['vehicle_types']
-osm_path = data['osm_path']
+veh_types = data.get('vehicle_types', [])
+osm_path = data.get('osm_path')
 
-if data['inflows'] is not None:
+if data.get('inflows') is not None:
     inflows = InFlows()
     inflows.__dict__ = data['inflows'].copy()
 else:
     inflows = None
 
-if data['traffic_lights'] is not None:
+if data.get('traffic_lights') is not None:
     traffic_lights = TrafficLightParams()
     traffic_lights.__dict__ = data['traffic_lights'].copy()
 else:
     traffic_lights = None
 
-# generate the network
-print "GENERATE: osm_path is None ->", osm_path is None
+print("Loading the data %s " % (osm_path is not None))
+
 if osm_path is not None:
-    generate_net_osm(osm_path, inflows, veh_types)
+    generate_net_osm(data, gui, model, osm_path, inflows, veh_types, save_flg)
     edge_osm = {}
 
     section_type = model.getType("GKSection")
     for types in model.getCatalog().getUsedSubTypesFromType(section_type):
-        for s in types.itervalues():
+        for ids in types.keys():
+            s = types[ids]
             s_id = s.getId()
             num_lanes = s.getNbFullLanes()
             length = s.length2D()
@@ -843,16 +1246,16 @@ if osm_path is not None:
             edge_osm[s_id] = {"speed": speed,
                               "length": length,
                               "numLanes": num_lanes}
-    with open(os.path.join(config.PROJECT_PATH,
-                           'flow/utils/aimsun/osm_edges_%s.json' % port_string), 'w') \
-            as outfile:
+    filename2 = osp.join(PROJECT_PATH, 'flow/utils/aimsun/osm_edges_%s.json' % port_string)
+    with open(filename2, 'w') as outfile:
         json.dump(edge_osm, outfile, sort_keys=True, indent=4)
 
 else:
-    nodes = data['nodes']
-    edges = data['edges']
-    types = data['types']
-    connections = data['connections']
+    print("Loading the data from loaded json ")
+    nodes = data.get('nodes', [])
+    edges = data.get('edges', [])
+    types = data.get('types', [])
+    connections = data.get('connections', None)
 
     for i in range(len(edges)):
         if 'type' in edges[i]:
@@ -862,22 +1265,25 @@ else:
                     new_dict.pop("id")
                     edges[i].update(new_dict)
                     break
-    generate_net(nodes, edges, connections, inflows, veh_types, traffic_lights)
+
+    generate_net(data, gui, model, nodes, edges, connections, inflows, veh_types, traffic_lights, save_flg)
 
 # set sim step
-sim_step = data["sim_step"]
+sim_step = data.get("sim_step", 0.1)
 # retrieve experiment by name
-experiment_name = data["experiment_name"]
+experiment_name = data.get("experiment_name", "XPNoName")
 experiment = model.getCatalog().findByName(
-    experiment_name, model.getType("GKTExperiment"))
-set_sim_step(experiment, sim_step)
+    experiment_name, model.getType("GKTExperiment")
+)
+set_sim_step(model, experiment, sim_step)
 
-print "GENERATE RUN SIMULATION"
+print("GENERATE RUN SIMULATION")
 
 # run the simulation
 # find the replication
-replication_name = data["replication_name"]
+replication_name = data.get("replication_name", "")
 replication = model.getCatalog().findByName(replication_name)
 # execute, "play": run with GUI, "execute": run in batch mode
-mode = 'play' if data['render'] is True else 'execute'
+mode = 'play' if gui is not None and data.get('render', False) is True else 'execute'
 GKSystem.getSystem().executeAction(mode, replication, [], "")
+print("GENERATE RUNNING SIMULATION")

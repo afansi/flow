@@ -1,27 +1,146 @@
 # flake8: noqa
 """Script used to interact with Aimsun's API during the simulation phase."""
-import flow.config as config
 import sys
 import os
 
 # sys.path.append(os.path.join(config.AIMSUN_NEXT_PATH,
 #                              'programming/Aimsun Next API/AAPIPython/Micro'))
+
+AIMSUN_NEXT_PATH = os.environ.get("AIMSUN_NEXT_PATH", None)
+
+print("TEST RUN API")
+print("TEST RUN AIMSUN_NEXT_PATH: %s" % (AIMSUN_NEXT_PATH))
+
 sys.path.append(
     os.path.join(
-        config.AIMSUN_NEXT_PATH,
+        AIMSUN_NEXT_PATH,
         'programming/Aimsun Next API/python/private/Micro'
     )
 )
 
-import flow.utils.aimsun.constants as ac
 import AAPI as aimsun_api
 from AAPI import *
 from PyANGKernel import *
 import socket
 import struct
-from thread import start_new_thread
-import numpy as np
+from _thread import start_new_thread
 
+class dotdict(dict):
+    """dot.notation access to dictionary attributes"""
+    __getattr__ = dict.get
+    __setattr__ = dict.__setitem__
+    __delattr__ = dict.__delitem__
+    
+
+constants = {
+    ###############################################################################
+    #                             Simulation Commands                             #
+    ###############################################################################
+
+    #: simulation step
+    'SIMULATION_STEP': 0x00,
+
+    #: terminate the simulation
+    'SIMULATION_TERMINATE': 0x01,
+
+
+    ###############################################################################
+    #                               Network Commands                              #
+    ###############################################################################
+
+    #: get the edge name in aimsun
+    'GET_EDGE_NAME': 0x02,
+
+
+    ###############################################################################
+    #                               Vehicle Commands                              #
+    ###############################################################################
+
+    #: add a vehicle
+    'ADD_VEHICLE': 0x03,
+
+    #: remove a vehicle
+    'REMOVE_VEHICLE': 0x04,
+
+    #: set vehicle speed
+    'VEH_SET_SPEED': 0x05,
+
+    #: apply vehicle lane change
+    'VEH_SET_LANE': 0x06,
+
+    #: set vehicle route
+    'VEH_SET_ROUTE': 0x07,
+
+    #: set color
+    'VEH_SET_COLOR': 0x08,
+
+    #: get IDs of entering vehicles
+    'VEH_GET_ENTERED_IDS': 0x09,
+
+    #: get IDs of exiting vehicles
+    'VEH_GET_EXITED_IDS': 0x0A,
+
+    #: get vehicle type in Aimsun
+    'VEH_GET_TYPE_ID': 0x0B,
+
+    #: get vehicle static information
+    'VEH_GET_STATIC': 0x0C,
+
+    #: get vehicle tracking information
+    'VEH_GET_TRACKING': 0x0D,
+
+    #: get vehicle leader
+    'VEH_GET_LEADER': 0x0E,
+
+    #: get vehicle follower
+    'VEH_GET_FOLLOWER': 0x0F,
+
+    #: get vehicle next section
+    'VEH_GET_NEXT_SECTION': 0x10,
+
+    #: get vehicle route
+    'VEH_GET_ROUTE': 0x11,
+
+    #: get vehicle speed if no API command was submitted
+    'VEH_GET_DEFAULT_SPEED': 0x12,
+
+    #: get vehicle angle
+    'VEH_GET_ORIENTATION': 0x13,
+
+    # TODO: not 100% sure what this is...
+    'VEH_GET_TIMESTEP': 0x14,
+
+    # TODO: not 100% sure what this is...
+    'VEH_GET_TIMEDELTA': 0x15,
+
+    #: get vehicle type name in Aimsun
+    'VEH_GET_TYPE_NAME': 0x16,
+
+    #: get vehicle length
+    'VEH_GET_LENGTH': 0x17,
+
+    #: set vehicle as tracked in Aimsun
+    'VEH_SET_TRACKED': 0x18,
+
+    #: set vehicle as untracked in Aimsun
+    'VEH_SET_NO_TRACKED': 0x19,
+
+
+    ###############################################################################
+    #                           Traffic Light Commands                            #
+    ###############################################################################
+
+    #: get traffic light IDs
+    'TL_GET_IDS': 0x1A,
+
+    #: set traffic light state
+    'TL_SET_STATE': 0x1B,
+
+    #: get traffic light state
+    'TL_GET_STATE': 0x1C,
+}
+
+ac = dotdict(constants)
 model = GKSystem.getSystem().getActiveModel()
 PORT = int(model.getAuthor())
 entered_vehicles = []
@@ -46,6 +165,9 @@ def send_message(conn, in_format, values):
     if in_format == 'str':
         packer = struct.Struct(format='i')
         values = values[0]
+        
+        if isinstance(values, str):
+            values = values.encode()
 
         # when the message is too large, send value in segments and inform the
         # client that additional information will be sent. The value will be
@@ -238,6 +360,9 @@ def threaded_client(conn):
                 type_id = None
                 while type_id is None:
                     type_id = conn.recv(2048)
+                    
+                if isinstance(type_id, bytes):
+                    type_id = type_id.decode()
 
                 # convert the edge name to an edge name in Aimsun
                 model = GKSystem.getSystem().getActiveModel()
@@ -328,6 +453,8 @@ def threaded_client(conn):
 
                 # separate the actual bitmap from the vehicle id
                 s = ""
+                if isinstance(info_bitmap, bytes):
+                    info_bitmap = info_bitmap.decode()
                 for i in range(len(info_bitmap)):
                     if info_bitmap[i] == ':':
                         info_bitmap = info_bitmap[i+1:]
@@ -458,6 +585,9 @@ def threaded_client(conn):
                 while edge is None:
                     edge = conn.recv(2048)
 
+                if isinstance(edge, bytes):
+                    edge = edge.decode()
+                
                 model = GKSystem.getSystem().getActiveModel()
                 edge_aimsun = model.getCatalog().findByName(
                     edge, model.getType('GKSection'))
@@ -479,13 +609,21 @@ def threaded_client(conn):
 
 def AAPILoad():
     """Execute commands while the Aimsun template is loading."""
+    print("AAPILoad")
     return 0
 
 
 def AAPIInit():
     """Execute commands while the Aimsun instance is initializing."""
     # set the simulation time to be very large
+    print("AAPIInit")
     AKISetEndSimTime(2e6)
+    return 0
+
+
+def AAPISimulationReady():
+    """Execute commands when the Aimsun instance has finished initialization."""
+    print("AAPISimulationReady")
     return 0
 
 
@@ -502,6 +640,8 @@ def AAPIManage(time, timeSta, timeTrans, acycle):
 
     # start the threaded process
     start_new_thread(threaded_client, (c,))
+    
+    # print("AAPIManage:: THREAD CLIENT")
 
     return 0
 
@@ -523,6 +663,11 @@ def AAPIUnLoad():
 
 def AAPIPreRouteChoiceCalculation(time, timeSta):
     """Execute Aimsun route choice calculation."""
+    return 0
+
+
+def AAPIVehicleStartParking(idveh, idsection, time):
+    """Called when a vehicle starts a parking maneuver."""
     return 0
 
 
@@ -558,3 +703,8 @@ def AAPIEnterVehicleSection(idveh, idsection, atime):
 def AAPIExitVehicleSection(idveh, idsection, atime):
     """Execute command once a vehicle exits the Aimsun instance."""
     return 0
+
+
+def AAPIInternalName():
+    """Returns the unique internal name of the API. It is called when registering APIs before simulation."""
+    return "FlowAimsunAPIV2"
